@@ -10,7 +10,7 @@ Signed-off-by: sbwml <admin@cooluc.com>
 
 --- a/dae-core/control/kern/tproxy.c
 +++ b/dae-core/control/kern/tproxy.c
-@@ -1730,75 +1730,13 @@ int tproxy_dae0_ingress(struct __sk_buff
+@@ -1731,79 +1731,14 @@ int tproxy_dae0_ingress(struct __sk_buff
  	return bpf_redirect(redirect_entry->ifindex, flags);
  }
  
@@ -44,6 +44,15 @@ Signed-off-by: sbwml <admin@cooluc.com>
  static __always_inline int get_pid_pname(struct pid_pname *pid_pname)
  {
 -	int ret;
+-
+-	pid_pname->pid = bpf_get_current_pid_tgid() >> 32;
+-	if (!PARAM.has_bpf_get_current_task) {
+-		if (bpf_get_current_comm(&pid_pname->pname,
+-					 sizeof(pid_pname->pname)))
+-			pid_pname->pname[0] = '\0';
+-		return 0;
+-	}
+-
 -	// Get pointer to args string.
 -	struct task_struct *task = (void *)bpf_get_current_task();
 -	char *args = (void *)BPF_CORE_READ(task, mm, arg_start);
@@ -75,18 +84,13 @@ Signed-off-by: sbwml <admin@cooluc.com>
 -			pid_pname->pname[i] = '\0';
 -			break;
 -		}
--	}
--
--	// Pupulate tgid
--	ret = bpf_core_read(&pid_pname->pid, sizeof(pid_pname->pid),
--			    &task->tgid);
--	if (unlikely(ret < 0)) {
--		bpf_printk("failed to read pid: %d", ret);
--		return ret;
 +	__u64 pid_tgid = bpf_get_current_pid_tgid();
 +	pid_pname->pid = pid_tgid >> 32;
 +	if (bpf_get_current_comm(&pid_pname->pname, sizeof(pid_pname->pname))) {
 +		pid_pname->pname[0] = '\0';
  	}
- 	return 0;
+-
+-	return 0;
  }
+ 
+ static __always_inline int _update_map_elem_by_cookie(const __u64 cookie)
