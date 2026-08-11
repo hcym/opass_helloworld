@@ -203,6 +203,7 @@ load_acl() {
 		for sid in $(ls -F ${TMP_ACL_PATH} | grep '/$' | awk -F '/' '{print $1}' | grep -v 'default'); do
 			eval "$(uci -q show "${CONFIG}.${sid}" | cut -d'.' -sf 3-)"
 
+			mode=${mode:-0}
 			tcp_no_redir_ports=${tcp_no_redir_ports:-default}
 			udp_no_redir_ports=${udp_no_redir_ports:-default}
 			use_global_config=${use_global_config:-0}
@@ -217,6 +218,10 @@ load_acl() {
 			chn_list=${chn_list:-direct}
 			tcp_proxy_mode=${tcp_proxy_mode:-proxy}
 			udp_proxy_mode=${udp_proxy_mode:-proxy}
+			[ "$mode" = "0" ] && {
+				tcp_no_redir_ports="1:65535"
+				udp_no_redir_ports="1:65535"
+			}
 			[ "$tcp_no_redir_ports" = "default" ] && tcp_no_redir_ports=$TCP_NO_REDIR_PORTS
 			[ "$udp_no_redir_ports" = "default" ] && udp_no_redir_ports=$UDP_NO_REDIR_PORTS
 			[ "$tcp_proxy_drop_ports" = "default" ] && tcp_proxy_drop_ports=$TCP_PROXY_DROP_PORTS
@@ -231,15 +236,15 @@ load_acl() {
 			[ -n "$(get_cache_var "ACL_${sid}_dns_port")" ] && dns_redirect_port=$(get_cache_var "ACL_${sid}_dns_port")
 			[ -n "$(get_cache_var "ACL_${sid}_fakedns")" ] && use_fakedns=$(get_cache_var "ACL_${sid}_fakedns")
 			[ -n "$tcp_node" ] && {
-				if is_socks_wrap "$tcp_node"; then
-					tcp_node_remark="Socks 配置($(config_n_get ${tcp_node#Socks_} port) 端口)"
+				if [ "$(config_get_type $tcp_node)" = "socks" ]; then
+					tcp_node_remark="Socks 配置($(config_n_get $tcp_node port) 端口)"
 				else
 					tcp_node_remark=$(config_n_get $tcp_node remarks)
 				fi
 			}
 			[ -n "$udp_node" ] && {
-				if is_socks_wrap "$udp_node"; then
-					udp_node_remark="Socks 配置($(config_n_get ${udp_node#Socks_} port) 端口)"
+				if [ "$(config_get_type $udp_node)" = "socks" ]; then
+					udp_node_remark="Socks 配置($(config_n_get $udp_node port) 端口)"
 				else
 					udp_node_remark=$(config_n_get $udp_node remarks)
 				fi
@@ -251,13 +256,13 @@ load_acl() {
 			[ -n "$udp_node" ] && [ "$(config_n_get $udp_node protocol)" = "_shunt" ] && use_shunt_udp=1
 
 			[ "${use_global_config}" = "1" ] && {
-				if is_socks_wrap "$TCP_NODE"; then
-					tcp_node_remark="Socks 配置($(config_n_get ${TCP_NODE#Socks_} port) 端口)"
+				if [ "$(config_get_type $TCP_NODE)" = "socks" ]; then
+					tcp_node_remark="Socks 配置($(config_n_get $TCP_NODE} port) 端口)"
 				else
 					tcp_node_remark=$(config_n_get $TCP_NODE remarks)
 				fi
-				if is_socks_wrap "$UDP_NODE"; then
-					udp_node_remark="Socks 配置($(config_n_get ${UDP_NODE#Socks_} port) 端口)"
+				if [ "$(config_get_type $UDP_NODE)" = "socks" ]; then
+					udp_node_remark="Socks 配置($(config_n_get $UDP_NODE port) 端口)"
 				else
 					udp_node_remark=$(config_n_get $UDP_NODE remarks)
 				fi
@@ -646,8 +651,8 @@ load_acl() {
 		#  加载TCP默认代理模式
 		if [ -n "${TCP_PROXY_MODE}" ]; then
 			[ -n "$TCP_NODE" ] && {
-				if is_socks_wrap "$TCP_NODE"; then
-					msg2="${msg}使用 TCP 节点[Socks 配置($(config_n_get ${TCP_NODE#Socks_} port) 端口)]"
+				if [ "$(config_get_type $TCP_NODE)" = "socks" ]; then
+					msg2="${msg}使用 TCP 节点[Socks 配置($(config_n_get $TCP_NODE port) 端口)]"
 				else
 					msg2="${msg}使用 TCP 节点[$(config_n_get $TCP_NODE remarks)]"
 				fi
@@ -705,8 +710,8 @@ load_acl() {
 		#  加载UDP默认代理模式
 		if [ -n "${UDP_PROXY_MODE}" ]; then
 			[ -n "$UDP_NODE" ] || [ "$TCP_UDP" = "1" ] && {
-				if is_socks_wrap "$UDP_NODE"; then
-					msg2="${msg}使用 UDP 节点[Socks 配置($(config_n_get ${UDP_NODE#Socks_} port) 端口)](TPROXY:${UDP_REDIR_PORT})"
+				if [ "$(config_get_type $UDP_NODE)" = "socks" ]; then
+					msg2="${msg}使用 UDP 节点[Socks 配置($(config_n_get $UDP_NODE port) 端口)](TPROXY:${UDP_REDIR_PORT})"
 				else
 					msg2="${msg}使用 UDP 节点[$(config_n_get $UDP_NODE remarks)](TPROXY:${UDP_REDIR_PORT})"
 				fi
@@ -747,13 +752,13 @@ filter_haproxy() {
 
 filter_vpsip() {
 	local EXCLUDE_VPSIP="^(0\.0\.0\.0|127\.0\.0\.1|1\.1\.1\.1|1\.1\.1\.2|8\.8\.8\.8|8\.8\.4\.4|9\.9\.9\.9)$"
-	uci show $CONFIG | grep -E "(\.address=|\.download_address=)" | cut -d "'" -f 2 | grep -E "^([0-9]{1,3}\.){3}[0-9]{1,3}$" | grep -Ev "$EXCLUDE_VPSIP" | sed "s/^/add $IPSET_VPS /" | awk '1; END{print "COMMIT"}' | ipset -! -R
+	uci show $CONFIG | grep -E "(\.address=|\.download_address=|\.domain_resolver_dns=|\.domain_resolver_dns_https=)" | cut -d "'" -f 2 | grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}" | grep -Ev "$EXCLUDE_VPSIP" | sed "s/^/add $IPSET_VPS /" | awk '1; END{print "COMMIT"}' | ipset -! -R
 	echolog "  - [$?]加入所有IPv4节点到ipset[$IPSET_VPS]直连完成"
-	uci show $CONFIG | grep -E "(\.address=|\.download_address=)" | cut -d "'" -f 2 | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed "s/^/add $IPSET_VPS6 /" | awk '1; END{print "COMMIT"}' | ipset -! -R
+	uci show $CONFIG | grep -E "(\.address=|\.download_address=|\.domain_resolver_dns=|\.domain_resolver_dns_https=)" | cut -d "'" -f 2 | grep -Eo "\[?[A-Fa-f0-9:]*:[A-Fa-f0-9:]+\]?" | sed "s/^/add $IPSET_VPS6 /" | awk '1; END{print "COMMIT"}' | ipset -! -R
 	echolog "  - [$?]加入所有IPv6节点到ipset[$IPSET_VPS6]直连完成"
 	#订阅方式为直连时
-	get_subscribe_host | grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | grep -Ev "$EXCLUDE_VPSIP" | sed "s/^/add $IPSET_VPS /" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
-	get_subscribe_host | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed "s/^/add $IPSET_VPS6 /" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
+	get_subscribe_host | grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}" | grep -Ev "$EXCLUDE_VPSIP" | sed "s/^/add $IPSET_VPS /" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
+	get_subscribe_host | grep -Eo "\[?[A-Fa-f0-9:]*:[A-Fa-f0-9:]+\]?" | sed "s/^/add $IPSET_VPS6 /" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
 }
 
 filter_server_port() {
@@ -952,7 +957,14 @@ add_firewall_rule() {
 	[ "$USE_SHUNT_NODE" = "1" ] && {
 		local GEOIP_CODE=""
 		local shunt_ids=$(uci show $CONFIG | grep "=shunt_rules" | awk -F '.' '{print $2}' | awk -F '=' '{print $1}')
+		local shunt_group
+		if [ "${USE_SHUNT_TCP}" = "1" ]; then
+			shunt_group=$(config_n_get $_TCP_NODE shunt_group)
+		elif [ "${USE_SHUNT_UDP}" = "1" ]; then
+			shunt_group=$(config_n_get $_UDP_NODE shunt_group)
+		fi
 		for shunt_id in $shunt_ids; do
+			[ "${shunt_group}" != "$(config_n_get ${shunt_id} group)" ] && continue
 			config_n_get $shunt_id ip_list | tr -s "\r\n" "\n" | grep -v "^#" | sed -e "/^$/d" | grep -E "(\.((2(5[0-5]|[0-4][0-9]))|[0-1]?[0-9]{1,2})){3}" | sed -e "s/^/add $IPSET_SHUNT &/g" -e "s/$/ timeout 0/g" | ipset -! -R
 			config_n_get $shunt_id ip_list | tr -s "\r\n" "\n" | grep -v "^#" | sed -e "/^$/d" | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed -e "s/^/add $IPSET_SHUNT6 &/g" -e "s/$/ timeout 0/g" | ipset -! -R
 			[ "$USE_GEOVIEW" = "1" ] && {
@@ -1398,8 +1410,8 @@ del_firewall_rule() {
 	done
 	for ipt in "$ipt_f" "$ip6t_f"; do
 		for chain in "FORWARD" "INPUT" "OUTPUT"; do
-			for i in $(seq 1 $($ipt -nL $chain | grep -c PSW)); do
-				local index=$($ipt --line-number -nL $chain | grep PSW | head -1 | awk '{print $1}')
+			for i in $(seq 1 $($ipt -nL $chain | grep -c PSW_REJECT)); do
+				local index=$($ipt --line-number -nL $chain | grep PSW_REJECT | head -1 | awk '{print $1}')
 				$ipt -D $chain $index 2>/dev/null
 			done
 		done
